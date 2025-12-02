@@ -1,51 +1,27 @@
-# Build stage
-FROM ubuntu:22.04 AS builder
+# Build C++ scorer
+FROM ubuntu:22.04 AS cpp-builder
 
-# Avoid prompts during package installation
-ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y g++ && rm -rf /var/lib/apt/lists/*
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    g++ \
-    cmake \
-    make \
-    libsqlite3-dev \
-    libboost-system-dev \
-    libboost-thread-dev \
-    libasio-dev \
-    wget \
-    && rm -rf /var/lib/apt/lists/*
-
-# Download Crow (header-only library)
 WORKDIR /app
-RUN wget --no-check-certificate https://github.com/CrowCpp/Crow/releases/download/v1.2.0/crow_all.h -O crow_all.h || \
-    wget --no-check-certificate https://crowcpp.org/master/crow_all.h -O crow_all.h
+COPY backend/scorer.cpp .
+RUN g++ -std=c++17 -O2 -o scorer scorer.cpp
 
-# Copy source code from backend folder
-COPY backend/main.cpp .
-
-# Compile
-RUN g++ -std=c++17 -O2 -o server main.cpp \
-    -lsqlite3 -lpthread \
-    -I/usr/include
-
-# Runtime stage
-FROM ubuntu:22.04
-
-RUN apt-get update && apt-get install -y \
-    libsqlite3-0 \
-    && rm -rf /var/lib/apt/lists/*
+# Python runtime
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy binary from builder
-COPY --from=builder /app/server .
+# Copy compiled scorer from builder
+COPY --from=cpp-builder /app/scorer ./backend/scorer
 
-# Create data directory for SQLite
-RUN mkdir -p /app/data
+# Install Python dependencies
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose port (Railway will set PORT env var)
+# Copy Python backend
+COPY backend/main.py ./backend/
+
 EXPOSE 8080
 
-# Run the server
-CMD ["./server"]
+CMD ["python", "backend/main.py"]
