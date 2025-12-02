@@ -1,11 +1,10 @@
 // ========================================
 // API Configuration
 // ========================================
-// GANTI dengan URL backend Railway setelah deploy
-const API_BASE_URL = '';
+const API_BASE_URL = 'https://mentalhealthtest-production.up.railway.app';
 
-// Set true setelah deploy backend
-const USE_BACKEND = false;
+// Backend is deployed on Railway
+const USE_BACKEND = true;
 
 // ========================================
 // WASM init
