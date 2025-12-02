@@ -37,12 +37,10 @@ std::string getCurrentTimestamp() {
     return oss.str();
 }
 
-crow::response addCorsHeaders(crow::response& res) {
-    res.add_header("Access-Control-Allow-Origin", "*");
-    res.add_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+#define ADD_CORS(res) \
+    res.add_header("Access-Control-Allow-Origin", "*"); \
+    res.add_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS"); \
     res.add_header("Access-Control-Allow-Headers", "Content-Type");
-    return res;
-}
 
 int main() {
     if (sqlite3_open("mental_health.db", &db) != SQLITE_OK) {
@@ -58,7 +56,8 @@ int main() {
     CROW_ROUTE(app, "/")
     ([]() {
         crow::response res("Mental Health API is running!");
-        return addCorsHeaders(res);
+        ADD_CORS(res);
+        return res;
     });
 
     CROW_ROUTE(app, "/api/health")
@@ -67,7 +66,8 @@ int main() {
         data["status"] = "ok";
         data["message"] = "Backend C++ is running";
         crow::response res(data);
-        return addCorsHeaders(res);
+        ADD_CORS(res);
+        return res;
     });
 
     // Submit test result
@@ -76,13 +76,15 @@ int main() {
         // Handle CORS preflight
         if (req.method == "OPTIONS"_method) {
             crow::response res(204);
-            return addCorsHeaders(res);
+            ADD_CORS(res);
+            return res;
         }
 
         auto body = crow::json::load(req.body);
         if (!body) {
             crow::response res(400, "Invalid JSON");
-            return addCorsHeaders(res);
+            ADD_CORS(res);
+            return res;
         }
 
         std::string name = "";
@@ -106,7 +108,8 @@ int main() {
         
         if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
             crow::response res(500, "Database error");
-            return addCorsHeaders(res);
+            ADD_CORS(res);
+            return res;
         }
 
         sqlite3_bind_text(stmt, 1, timestamp.c_str(), -1, SQLITE_TRANSIENT);
@@ -119,7 +122,8 @@ int main() {
         if (sqlite3_step(stmt) != SQLITE_DONE) {
             sqlite3_finalize(stmt);
             crow::response res(500, "Failed to save data");
-            return addCorsHeaders(res);
+            ADD_CORS(res);
+            return res;
         }
 
         int lastId = sqlite3_last_insert_rowid(db);
@@ -131,16 +135,18 @@ int main() {
         result["timestamp"] = timestamp;
         
         crow::response res(201, result);
-        return addCorsHeaders(res);
+        ADD_CORS(res);
+        return res;
     });
 
-    // Get and Delete history (combined to avoid duplicate route error)
+    // Get and Delete history
     CROW_ROUTE(app, "/api/history").methods("GET"_method, "DELETE"_method, "OPTIONS"_method)
     ([](const crow::request& req) {
         // Handle CORS preflight
         if (req.method == "OPTIONS"_method) {
             crow::response res(204);
-            return addCorsHeaders(res);
+            ADD_CORS(res);
+            return res;
         }
 
         // GET - fetch history
@@ -150,7 +156,8 @@ int main() {
 
             if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
                 crow::response res(500, "Database error");
-                return addCorsHeaders(res);
+                ADD_CORS(res);
+                return res;
             }
 
             std::vector<crow::json::wvalue> records;
@@ -174,34 +181,32 @@ int main() {
             result["data"] = std::move(records);
             
             crow::response res(200, result);
-            return addCorsHeaders(res);
+            ADD_CORS(res);
+            return res;
         }
 
         // DELETE - clear all history
-        if (req.method == "DELETE"_method) {
-            const char* sql = "DELETE FROM history;";
-            char* errMsg = nullptr;
+        const char* sql = "DELETE FROM history;";
+        char* errMsg = nullptr;
 
-            if (sqlite3_exec(db, sql, nullptr, nullptr, &errMsg) != SQLITE_OK) {
-                std::string error = errMsg;
-                sqlite3_free(errMsg);
-                crow::response res(500, error);
-                return addCorsHeaders(res);
-            }
-
-            crow::json::wvalue result;
-            result["success"] = true;
-            result["message"] = "All history deleted";
-            
-            crow::response res(200, result);
-            return addCorsHeaders(res);
+        if (sqlite3_exec(db, sql, nullptr, nullptr, &errMsg) != SQLITE_OK) {
+            std::string error = errMsg;
+            sqlite3_free(errMsg);
+            crow::response res(500, error);
+            ADD_CORS(res);
+            return res;
         }
 
-        crow::response res(405, "Method not allowed");
-        return addCorsHeaders(res);
+        crow::json::wvalue result;
+        result["success"] = true;
+        result["message"] = "All history deleted";
+        
+        crow::response res(200, result);
+        ADD_CORS(res);
+        return res;
     });
 
-    // Get port from environment variable (Railway sets this)
+    // Get port from environment variable
     char* port_str = std::getenv("PORT");
     int port = port_str ? std::stoi(port_str) : 8080;
 
