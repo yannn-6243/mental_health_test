@@ -1,0 +1,13 @@
+# Abaikan folder dan cache virtual environment
+.git
+.venv
+__pycache__
+*.pyc
+
+# Abaikan folder instalasi emsdk yang besar (jika ada di root)
+emsdk/
+
+# Abaikan file C++ temporary dan database lokal
+*.o
+*.out
+*.db
