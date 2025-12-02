@@ -47,17 +47,12 @@ int main() {
     
     crow::SimpleApp app;
 
-    // CORS middleware
-    auto& cors = app.get_middleware<crow::CORSHandler>();
-    cors.global()
-        .headers("Content-Type", "Authorization")
-        .methods("GET"_method, "POST"_method, "DELETE"_method, "OPTIONS"_method)
-        .origin("*");
-
     // Health check
     CROW_ROUTE(app, "/")
     ([]() {
-        return crow::response(200, "Mental Health API is running!");
+        crow::response res("Mental Health API is running!");
+        res.add_header("Access-Control-Allow-Origin", "*");
+        return res;
     });
 
     CROW_ROUTE(app, "/api/health")
@@ -65,29 +60,65 @@ int main() {
         crow::json::wvalue res;
         res["status"] = "ok";
         res["message"] = "Backend C++ is running";
-        return crow::response(200, res);
+        
+        crow::response response(res);
+        response.add_header("Access-Control-Allow-Origin", "*");
+        response.add_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+        response.add_header("Access-Control-Allow-Headers", "Content-Type");
+        return response;
+    });
+
+    // CORS preflight
+    CROW_ROUTE(app, "/api/<path>").methods("OPTIONS"_method)
+    ([](const std::string& path) {
+        crow::response res(204);
+        res.add_header("Access-Control-Allow-Origin", "*");
+        res.add_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+        res.add_header("Access-Control-Allow-Headers", "Content-Type");
+        return res;
     });
 
     // Submit test result
-    CROW_ROUTE(app, "/api/submit").methods("POST"_method)
+    CROW_ROUTE(app, "/api/submit").methods("POST"_method, "OPTIONS"_method)
     ([](const crow::request& req) {
-        auto body = crow::json::load(req.body);
-        if (!body) {
-            return crow::response(400, "Invalid JSON");
+        if (req.method == "OPTIONS"_method) {
+            crow::response res(204);
+            res.add_header("Access-Control-Allow-Origin", "*");
+            res.add_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+            res.add_header("Access-Control-Allow-Headers", "Content-Type");
+            return res;
         }
 
-        std::string name = body.has("name") ? body["name"].s() : "";
+        auto body = crow::json::load(req.body);
+        if (!body) {
+            crow::response res(400, "Invalid JSON");
+            res.add_header("Access-Control-Allow-Origin", "*");
+            return res;
+        }
+
+        std::string name = "";
+        if (body.has("name")) {
+            name = std::string(body["name"].s());
+        }
+        
         int score = body["score"].i();
         int maxScore = body["max_score"].i();
-        std::string category = body["category"].s();
-        std::string note = body.has("note") ? body["note"].s() : "";
+        std::string category = std::string(body["category"].s());
+        
+        std::string note = "";
+        if (body.has("note")) {
+            note = std::string(body["note"].s());
+        }
+        
         std::string timestamp = getCurrentTimestamp();
 
         const char* sql = "INSERT INTO history (timestamp, name, score, max_score, category, note) VALUES (?, ?, ?, ?, ?, ?);";
         sqlite3_stmt* stmt;
         
         if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            return crow::response(500, "Database error");
+            crow::response res(500, "Database error");
+            res.add_header("Access-Control-Allow-Origin", "*");
+            return res;
         }
 
         sqlite3_bind_text(stmt, 1, timestamp.c_str(), -1, SQLITE_TRANSIENT);
@@ -99,27 +130,42 @@ int main() {
 
         if (sqlite3_step(stmt) != SQLITE_DONE) {
             sqlite3_finalize(stmt);
-            return crow::response(500, "Failed to save data");
+            crow::response res(500, "Failed to save data");
+            res.add_header("Access-Control-Allow-Origin", "*");
+            return res;
         }
 
         int lastId = sqlite3_last_insert_rowid(db);
         sqlite3_finalize(stmt);
 
-        crow::json::wvalue res;
-        res["success"] = true;
-        res["id"] = lastId;
-        res["timestamp"] = timestamp;
-        return crow::response(201, res);
+        crow::json::wvalue result;
+        result["success"] = true;
+        result["id"] = lastId;
+        result["timestamp"] = timestamp;
+        
+        crow::response res(201, result);
+        res.add_header("Access-Control-Allow-Origin", "*");
+        return res;
     });
 
     // Get history
-    CROW_ROUTE(app, "/api/history")
-    ([]() {
+    CROW_ROUTE(app, "/api/history").methods("GET"_method, "OPTIONS"_method)
+    ([](const crow::request& req) {
+        if (req.method == "OPTIONS"_method) {
+            crow::response res(204);
+            res.add_header("Access-Control-Allow-Origin", "*");
+            res.add_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+            res.add_header("Access-Control-Allow-Headers", "Content-Type");
+            return res;
+        }
+
         const char* sql = "SELECT id, timestamp, name, score, max_score, category, note FROM history ORDER BY id DESC;";
         sqlite3_stmt* stmt;
 
         if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            return crow::response(500, "Database error");
+            crow::response res(500, "Database error");
+            res.add_header("Access-Control-Allow-Origin", "*");
+            return res;
         }
 
         std::vector<crow::json::wvalue> records;
@@ -139,52 +185,43 @@ int main() {
         }
         sqlite3_finalize(stmt);
 
-        crow::json::wvalue res;
-        res["data"] = std::move(records);
-        return crow::response(200, res);
-    });
-
-    // Delete single record
-    CROW_ROUTE(app, "/api/history/<int>").methods("DELETE"_method)
-    ([](int id) {
-        const char* sql = "DELETE FROM history WHERE id = ?;";
-        sqlite3_stmt* stmt;
-
-        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            return crow::response(500, "Database error");
-        }
-
-        sqlite3_bind_int(stmt, 1, id);
-        sqlite3_step(stmt);
-        int changes = sqlite3_changes(db);
-        sqlite3_finalize(stmt);
-
-        if (changes == 0) {
-            return crow::response(404, "Record not found");
-        }
-
-        crow::json::wvalue res;
-        res["success"] = true;
-        res["deleted_id"] = id;
-        return crow::response(200, res);
+        crow::json::wvalue result;
+        result["data"] = std::move(records);
+        
+        crow::response res(200, result);
+        res.add_header("Access-Control-Allow-Origin", "*");
+        return res;
     });
 
     // Delete all history
-    CROW_ROUTE(app, "/api/history").methods("DELETE"_method)
-    ([]() {
+    CROW_ROUTE(app, "/api/history").methods("DELETE"_method, "OPTIONS"_method)
+    ([](const crow::request& req) {
+        if (req.method == "OPTIONS"_method) {
+            crow::response res(204);
+            res.add_header("Access-Control-Allow-Origin", "*");
+            res.add_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+            res.add_header("Access-Control-Allow-Headers", "Content-Type");
+            return res;
+        }
+
         const char* sql = "DELETE FROM history;";
         char* errMsg = nullptr;
 
         if (sqlite3_exec(db, sql, nullptr, nullptr, &errMsg) != SQLITE_OK) {
             std::string error = errMsg;
             sqlite3_free(errMsg);
-            return crow::response(500, error);
+            crow::response res(500, error);
+            res.add_header("Access-Control-Allow-Origin", "*");
+            return res;
         }
 
-        crow::json::wvalue res;
-        res["success"] = true;
-        res["message"] = "All history deleted";
-        return crow::response(200, res);
+        crow::json::wvalue result;
+        result["success"] = true;
+        result["message"] = "All history deleted";
+        
+        crow::response res(200, result);
+        res.add_header("Access-Control-Allow-Origin", "*");
+        return res;
     });
 
     // Get port from environment variable (Railway sets this)

@@ -27,8 +27,7 @@ COPY backend/main.cpp .
 # Compile
 RUN g++ -std=c++17 -O2 -o server main.cpp \
     -lsqlite3 -lpthread \
-    -I/usr/include \
-    -DCROW_ENABLE_CORS
+    -I/usr/include
 
 # Runtime stage
 FROM ubuntu:22.04
