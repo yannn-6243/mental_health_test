@@ -37,6 +37,13 @@ std::string getCurrentTimestamp() {
     return oss.str();
 }
 
+crow::response addCorsHeaders(crow::response& res) {
+    res.add_header("Access-Control-Allow-Origin", "*");
+    res.add_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.add_header("Access-Control-Allow-Headers", "Content-Type");
+    return res;
+}
+
 int main() {
     if (sqlite3_open("mental_health.db", &db) != SQLITE_OK) {
         std::cerr << "Cannot open database: " << sqlite3_errmsg(db) << std::endl;
@@ -51,49 +58,31 @@ int main() {
     CROW_ROUTE(app, "/")
     ([]() {
         crow::response res("Mental Health API is running!");
-        res.add_header("Access-Control-Allow-Origin", "*");
-        return res;
+        return addCorsHeaders(res);
     });
 
     CROW_ROUTE(app, "/api/health")
     ([]() {
-        crow::json::wvalue res;
-        res["status"] = "ok";
-        res["message"] = "Backend C++ is running";
-        
-        crow::response response(res);
-        response.add_header("Access-Control-Allow-Origin", "*");
-        response.add_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-        response.add_header("Access-Control-Allow-Headers", "Content-Type");
-        return response;
-    });
-
-    // CORS preflight
-    CROW_ROUTE(app, "/api/<path>").methods("OPTIONS"_method)
-    ([](const std::string& path) {
-        crow::response res(204);
-        res.add_header("Access-Control-Allow-Origin", "*");
-        res.add_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-        res.add_header("Access-Control-Allow-Headers", "Content-Type");
-        return res;
+        crow::json::wvalue data;
+        data["status"] = "ok";
+        data["message"] = "Backend C++ is running";
+        crow::response res(data);
+        return addCorsHeaders(res);
     });
 
     // Submit test result
     CROW_ROUTE(app, "/api/submit").methods("POST"_method, "OPTIONS"_method)
     ([](const crow::request& req) {
+        // Handle CORS preflight
         if (req.method == "OPTIONS"_method) {
             crow::response res(204);
-            res.add_header("Access-Control-Allow-Origin", "*");
-            res.add_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-            res.add_header("Access-Control-Allow-Headers", "Content-Type");
-            return res;
+            return addCorsHeaders(res);
         }
 
         auto body = crow::json::load(req.body);
         if (!body) {
             crow::response res(400, "Invalid JSON");
-            res.add_header("Access-Control-Allow-Origin", "*");
-            return res;
+            return addCorsHeaders(res);
         }
 
         std::string name = "";
@@ -117,8 +106,7 @@ int main() {
         
         if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
             crow::response res(500, "Database error");
-            res.add_header("Access-Control-Allow-Origin", "*");
-            return res;
+            return addCorsHeaders(res);
         }
 
         sqlite3_bind_text(stmt, 1, timestamp.c_str(), -1, SQLITE_TRANSIENT);
@@ -131,8 +119,7 @@ int main() {
         if (sqlite3_step(stmt) != SQLITE_DONE) {
             sqlite3_finalize(stmt);
             crow::response res(500, "Failed to save data");
-            res.add_header("Access-Control-Allow-Origin", "*");
-            return res;
+            return addCorsHeaders(res);
         }
 
         int lastId = sqlite3_last_insert_rowid(db);
@@ -144,84 +131,74 @@ int main() {
         result["timestamp"] = timestamp;
         
         crow::response res(201, result);
-        res.add_header("Access-Control-Allow-Origin", "*");
-        return res;
+        return addCorsHeaders(res);
     });
 
-    // Get history
-    CROW_ROUTE(app, "/api/history").methods("GET"_method, "OPTIONS"_method)
+    // Get and Delete history (combined to avoid duplicate route error)
+    CROW_ROUTE(app, "/api/history").methods("GET"_method, "DELETE"_method, "OPTIONS"_method)
     ([](const crow::request& req) {
+        // Handle CORS preflight
         if (req.method == "OPTIONS"_method) {
             crow::response res(204);
-            res.add_header("Access-Control-Allow-Origin", "*");
-            res.add_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-            res.add_header("Access-Control-Allow-Headers", "Content-Type");
-            return res;
+            return addCorsHeaders(res);
         }
 
-        const char* sql = "SELECT id, timestamp, name, score, max_score, category, note FROM history ORDER BY id DESC;";
-        sqlite3_stmt* stmt;
+        // GET - fetch history
+        if (req.method == "GET"_method) {
+            const char* sql = "SELECT id, timestamp, name, score, max_score, category, note FROM history ORDER BY id DESC;";
+            sqlite3_stmt* stmt;
 
-        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            crow::response res(500, "Database error");
-            res.add_header("Access-Control-Allow-Origin", "*");
-            return res;
-        }
+            if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+                crow::response res(500, "Database error");
+                return addCorsHeaders(res);
+            }
 
-        std::vector<crow::json::wvalue> records;
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
-            crow::json::wvalue record;
-            record["id"] = sqlite3_column_int(stmt, 0);
-            record["timestamp"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-            record["name"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-            record["score"] = sqlite3_column_int(stmt, 3);
-            record["max_score"] = sqlite3_column_int(stmt, 4);
-            record["category"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+            std::vector<crow::json::wvalue> records;
+            while (sqlite3_step(stmt) == SQLITE_ROW) {
+                crow::json::wvalue record;
+                record["id"] = sqlite3_column_int(stmt, 0);
+                record["timestamp"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+                record["name"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+                record["score"] = sqlite3_column_int(stmt, 3);
+                record["max_score"] = sqlite3_column_int(stmt, 4);
+                record["category"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+                
+                const char* noteText = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 6));
+                record["note"] = noteText ? noteText : "";
+                
+                records.push_back(std::move(record));
+            }
+            sqlite3_finalize(stmt);
+
+            crow::json::wvalue result;
+            result["data"] = std::move(records);
             
-            const char* noteText = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 6));
-            record["note"] = noteText ? noteText : "";
+            crow::response res(200, result);
+            return addCorsHeaders(res);
+        }
+
+        // DELETE - clear all history
+        if (req.method == "DELETE"_method) {
+            const char* sql = "DELETE FROM history;";
+            char* errMsg = nullptr;
+
+            if (sqlite3_exec(db, sql, nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                std::string error = errMsg;
+                sqlite3_free(errMsg);
+                crow::response res(500, error);
+                return addCorsHeaders(res);
+            }
+
+            crow::json::wvalue result;
+            result["success"] = true;
+            result["message"] = "All history deleted";
             
-            records.push_back(std::move(record));
-        }
-        sqlite3_finalize(stmt);
-
-        crow::json::wvalue result;
-        result["data"] = std::move(records);
-        
-        crow::response res(200, result);
-        res.add_header("Access-Control-Allow-Origin", "*");
-        return res;
-    });
-
-    // Delete all history
-    CROW_ROUTE(app, "/api/history").methods("DELETE"_method, "OPTIONS"_method)
-    ([](const crow::request& req) {
-        if (req.method == "OPTIONS"_method) {
-            crow::response res(204);
-            res.add_header("Access-Control-Allow-Origin", "*");
-            res.add_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-            res.add_header("Access-Control-Allow-Headers", "Content-Type");
-            return res;
+            crow::response res(200, result);
+            return addCorsHeaders(res);
         }
 
-        const char* sql = "DELETE FROM history;";
-        char* errMsg = nullptr;
-
-        if (sqlite3_exec(db, sql, nullptr, nullptr, &errMsg) != SQLITE_OK) {
-            std::string error = errMsg;
-            sqlite3_free(errMsg);
-            crow::response res(500, error);
-            res.add_header("Access-Control-Allow-Origin", "*");
-            return res;
-        }
-
-        crow::json::wvalue result;
-        result["success"] = true;
-        result["message"] = "All history deleted";
-        
-        crow::response res(200, result);
-        res.add_header("Access-Control-Allow-Origin", "*");
-        return res;
+        crow::response res(405, "Method not allowed");
+        return addCorsHeaders(res);
     });
 
     // Get port from environment variable (Railway sets this)
