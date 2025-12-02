@@ -18,7 +18,8 @@ RUN apt-get update && apt-get install -y \
 
 # Download Crow (header-only library)
 WORKDIR /app
-RUN wget -q https://raw.githubusercontent.com/CrowCpp/Crow/v1.0%2B5/include/crow_all.h -O crow_all.h
+RUN wget --no-check-certificate https://github.com/CrowCpp/Crow/releases/download/v1.2.0/crow_all.h -O crow_all.h || \
+    wget --no-check-certificate https://crowcpp.org/master/crow_all.h -O crow_all.h
 
 # Copy source code from backend folder
 COPY backend/main.cpp .
